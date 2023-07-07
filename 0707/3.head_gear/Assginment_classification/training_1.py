@@ -1,0 +1,200 @@
+# training.py
+import torch
+from torchvision import transforms
+from torch.utils.data import DataLoader
+from torch.nn.utils import clip_grad_norm_
+from torch.optim import lr_scheduler
+
+from PIL import Image
+from utils.dataset import HeadGearDataset
+from utils.resnet_50 import resnet50
+from utils.model_mlp import MLP
+from utils.config import load_config
+from sklearn.metrics import f1_score
+
+
+from tqdm import tqdm
+
+import warnings
+warnings.filterwarnings("ignore")
+
+
+def train_one_epoch(model, criterion, optimizer, dataloader, device, grad_clip):
+    # TODO: Set the model to train mode
+    # model.'# fill this in'
+    model.train()
+
+    running_loss = 0.0
+    total_predictions = 0.0
+    correct_predictions = 0.0
+    all_labels = []
+    all_predictions = []
+
+    print(dataloader)
+    for data, target in tqdm(dataloader):
+        data, target = data.to(device), target.to(device)
+
+        # print(f'''batch_idx : {"x"}
+        #       data : {data}
+        #       target : {target}
+        #       ''')
+
+        optimizer.zero_grad()
+        
+        # TODO: Define Output
+        # output = # fill this in
+        output = model(data)
+
+        # TODO: Define Loss
+        # loss = # fill this in
+        loss = criterion(output, target)
+        running_loss += loss.item() * data.size(0)
+
+        _, predicted = torch.max(output.data, 1)
+        total_predictions += target.size(0)
+        correct_predictions += (predicted == target).sum().item()
+
+        all_labels.extend(target.detach().cpu().numpy().tolist())
+        all_predictions.extend(predicted.detach().cpu().numpy().tolist())
+
+        # TODO: Backpropagate Loss
+        # loss.'# fill this in'
+        loss.backward()
+        
+        if grad_clip is not None:
+            clip_grad_norm_(model.parameters(), grad_clip)
+        
+        # TODO: Update the weights
+        # optimizer.'# fill this in'
+        optimizer.step()
+
+    epoch_loss = running_loss / len(dataloader.dataset)
+    epoch_acc = (correct_predictions / total_predictions) * 100.0
+    epoch_f1 = f1_score(all_labels, all_predictions, average='macro')
+    return epoch_loss, epoch_acc, epoch_f1
+
+    # train_loss, n_correct, n_train = 0, 0, 0
+    # n_batch = len(dataloaders_train)
+    # model.train()
+    # for i_batch, (inputs, targets) in enumerate(dataloader, 0):
+    #     inputs, targets = inputs.to(device), targets.to(device)  # Move the input data to the GPU
+    #     def closure():
+    #         optimizer.zero_grad()
+    #         outputs = model(inputs)
+    #         loss = criterion(outputs, targets)
+    #         loss.backward()
+    #         torch.nn.utils.clip_grad_norm_(model.parameters())
+    #         return outputs, loss
+    #     outputs, loss = optimizer.step(closure)
+    #     # train_loss += loss.item() * targets.size(0)
+    #     train_loss += loss.item()
+    #     # n_correct += (torch.argmax(outputs, -1) == targets).sum().item()
+    #     n_correct += (torch.max(outputs.data, 1) == targets).sum().item()
+    #     n_train += targets.size(0)
+    #     # ratio = int((i_batch+1)*50/n_batch)
+
+    #     if i_batch % 100 == 99: 
+    #         print('[%d, %5d] loss: %.3f' % (config['training']['num_epochs'] + 50, i_batch + 1, train_loss / 100))
+    #         train_loss = 0.0  
+    # print()
+    # return train_loss / n_train, n_correct / n_train 
+
+
+
+def validate(model, criterion, dataloader, device):
+    # TODO: Set the model to evaluation mode
+    # model.'# fill this in'
+    model.eval()
+
+    running_valid_loss = 0.0
+    total_valid_predictions = 0.0
+    correct_valid_predictions = 0.0
+    all_valid_labels = []
+    all_valid_predictions = []
+
+    with torch.no_grad():
+        for data, target in dataloader:
+            data, target = data.to(device), target.to(device)
+            
+            # TODO: Define Output
+            # output = # fill this in
+            output = model(data)
+
+            # TODO: Define Loss
+            # loss = # fill this in
+            loss = criterion(output, target)
+            running_valid_loss += loss.item() * data.size(0)
+
+            _, predicted = torch.max(output.data, 1)
+            total_valid_predictions += target.size(0)
+            correct_valid_predictions += (predicted == target).sum().item()
+
+            all_valid_labels.extend(target.detach().cpu().numpy().tolist())
+            all_valid_predictions.extend(predicted.detach().cpu().numpy().tolist())
+
+    valid_loss = running_valid_loss / len(dataloader.dataset)
+    valid_acc = (correct_valid_predictions / total_valid_predictions) * 100.0
+    valid_f1 = f1_score(all_valid_labels, all_valid_predictions, average='macro')
+
+    return valid_loss, valid_acc, valid_f1
+
+
+def training(config):
+    device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
+    print(device)
+    transform = transforms.Compose([
+        # transforms.ToPILImage(),
+        transforms.RandomHorizontalFlip(),
+        transforms.RandomVerticalFlip(),
+        transforms.RandomRotation(15),
+        transforms.CenterCrop(64),
+        transforms.GaussianBlur(5),
+        transforms.ToTensor(),
+    ])
+
+    # TODO: Load the train dataset using HeadGearDataset class
+    # train_data = # fill this in
+    # train_loader = # fill this in
+    train_data  = HeadGearDataset(config['paths']['annotation'],config['paths']['dataset_path'], mode='train', transform=transform)
+    train_loader = DataLoader(train_data, batch_size = config['training']['batch_size'], shuffle = True)
+
+    # TODO: Load the validation dataset and create a DataLoader for it
+    # valid_data = # fill this in
+    # valid_loader = # fill this in
+    valid_data  = HeadGearDataset(config['paths']['annotation'],config['paths']['dataset_path'], mode='valid', transform=transform)
+    valid_loader = DataLoader(valid_data, batch_size = config['training']['batch_size'], shuffle = False)
+    
+    # TODO: Define the model, loss function, and optimizer
+    # model = # fill this in
+    model = resnet50(config['model']['num_classes'])
+    # model = MLP(20, 17, config['model']['num_classes'])
+    model = model.to(device)
+    
+    # TODO: Define the loss function and optimizer
+    # criterion = # fill this in
+    criterion = torch.nn.CrossEntropyLoss()
+    criterion = criterion.to(device)
+    # optimizer = # fill this in
+    optimizer = torch.optim.Adam(params=model.parameters(), lr=config['training']['learning_rate'], weight_decay=config['training']['weight_decay'])
+    # lr_scheduler = torch.optim.lr_scheduler()
+    grad_clip = config['training']['grad_clip']
+
+    # TODO: Train the model on the training data, and validate it on the validation data
+    
+    for epoch in range(config['training']['num_epochs']):
+        # TODO: Train the model on the training data
+        train_loss, train_acc, train_f1 = train_one_epoch(model, criterion, optimizer, train_loader, device, grad_clip)
+        print(f"Epoch: {epoch+1}/{config['training']['num_epochs']}.. Training Loss: {train_loss:.4f}.. Training Accuracy: {train_acc:.2f}%.. Training F1 Score: {train_f1:.2f}")
+
+        # TODO: Validate the model on the validation data
+        valid_loss, valid_acc, valid_f1 = validate(model, criterion, valid_loader, device)
+        print(f"Epoch: {epoch+1}/{config['training']['num_epochs']}.. Validation Loss: {valid_loss:.4f}.. Validation Accuracy: {valid_acc:.2f}%.. Validation F1 Score: {valid_f1:.2f}")
+
+
+    # TODO: Save the trained model
+    # # fill this in
+    torch.save(model.state_dict(), config['paths']['model_save_path'])
+    
+if __name__ == "__main__":
+    config = load_config('configs/configs.yaml')  # specify the path to your config file
+    training(config)
